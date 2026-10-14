@@ -2,7 +2,9 @@
  * Centralized API Client for Spring Boot Backend
  */
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
+const rawEnvUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api').trim().replace(/\/+$/, '');
+export const API_HOST = rawEnvUrl.endsWith('/api') ? rawEnvUrl.slice(0, -4) : rawEnvUrl;
+export const API_BASE_URL = `${API_HOST}/api`;
 
 const TOKEN_KEY = 'smartlocker_jwt';
 const USER_KEY = 'smartlocker_user';
@@ -27,12 +29,23 @@ export const tokenStorage = {
   }
 };
 
+function resolveEndpointUrl(endpoint) {
+  const clean = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  if (clean.startsWith('/api/') || clean === '/api') {
+    return `${API_HOST}${clean}`;
+  }
+  return `${API_BASE_URL}${clean}`;
+}
+
 async function request(endpoint, options = {}) {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = resolveEndpointUrl(cleanEndpoint);
   const headers = { ...options.headers };
   const token = tokenStorage.get();
 
-  if (token) {
+  // Public authentication endpoints must not send a stale or invalid JWT token
+  const isAuthPublic = cleanEndpoint.includes('/auth/register') || cleanEndpoint.includes('/auth/login');
+  if (token && !isAuthPublic) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
@@ -46,7 +59,7 @@ async function request(endpoint, options = {}) {
     headers
   });
 
-  if (response.status === 401 && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/register')) {
+  if (response.status === 401 && !isAuthPublic) {
     tokenStorage.clear();
     window.dispatchEvent(new CustomEvent('auth:expired'));
   }
@@ -76,14 +89,14 @@ async function request(endpoint, options = {}) {
 
 export const api = {
   auth: {
-    register: (payload) => request('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
-    login: (payload) => request('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
-    me: () => request('/auth/me')
+    register: (payload) => request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
+    login: (payload) => request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
+    me: () => request('/api/auth/me')
   },
   users: {
-    getProfile: () => request('/users/me'),
-    updateProfile: (payload) => request('/users/me', { method: 'PUT', body: JSON.stringify(payload) }),
-    changePassword: (payload) => request('/users/change-password', { method: 'PUT', body: JSON.stringify(payload) })
+    getProfile: () => request('/api/users/me'),
+    updateProfile: (payload) => request('/api/users/me', { method: 'PUT', body: JSON.stringify(payload) }),
+    changePassword: (payload) => request('/api/users/change-password', { method: 'PUT', body: JSON.stringify(payload) })
   },
   documents: {
     list: ({ page = 1, limit = 10, search = '', category = '' } = {}) => {
@@ -92,11 +105,11 @@ export const api = {
       if (limit) params.append('limit', limit);
       if (search) params.append('search', search);
       if (category) params.append('category', category);
-      return request(`/documents?${params.toString()}`);
+      return request(`/api/documents?${params.toString()}`);
     },
-    upload: (formData) => request('/documents', { method: 'POST', body: formData }),
-    get: (id) => request(`/documents/${id}`),
-    update: (id, payload) => request(`/documents/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+    upload: (formData) => request('/api/documents', { method: 'POST', body: formData }),
+    get: (id) => request(`/api/documents/${id}`),
+    update: (id, payload) => request(`/api/documents/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
     download: async (id) => {
       const url = `${API_BASE_URL}/documents/${id}/download`;
       const token = tokenStorage.get();
@@ -131,7 +144,7 @@ export const api = {
 
       return { filename, size: blob.size };
     },
-    delete: (id) => request(`/documents/${id}`, { method: 'DELETE' })
+    delete: (id) => request(`/api/documents/${id}`, { method: 'DELETE' })
   },
-  health: () => request('/health')
+  health: () => request('/api/health')
 };
